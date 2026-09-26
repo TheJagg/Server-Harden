@@ -35,7 +35,7 @@ Download it, read it, then run it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TheJagg/server-harden/main/harden.sh -o harden.sh
-less harden.sh
+more harden.sh      # Space for the next page, q to quit
 sudo bash harden.sh
 ```
 
