@@ -29,6 +29,9 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Never exit silently: if a command fails unexpectedly, say where.
+trap 'die "unexpected failure on line $LINENO: $BASH_COMMAND"' ERR
+
 # ─── IPv4 helpers ────────────────────────────────────────────────────
 
 is_ipv4() {
@@ -88,8 +91,8 @@ home=$(getent passwd "$user" | cut -d: -f6) || die "user '$user' doesn't exist"
 
 # Password login is about to be turned off, so a working key must already exist.
 keys="$home/.ssh/authorized_keys"
-if ! grep -vE '^[[:space:]]*#' "$keys" 2>/dev/null \
-    | grep -qE '(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9]+|sk-[a-z0-9@.-]+) '; then
+if ! awk '!/^[[:space:]]*#/ && /(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9]+|sk-[a-z0-9@.-]+) / { found = 1 }
+          END { exit !found }' "$keys" 2>/dev/null; then
   die "no SSH public key in $keys.
        Add yours first (see the README), or you'd be locked out once password login is off."
 fi
@@ -99,16 +102,18 @@ fi
 
 # sshd refuses to run -t/-T without this directory, which socket activation may not have created yet.
 mkdir -p /run/sshd
-ssh_port=$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')
+# Note: the awk programs below read all their input instead of exiting early. An early
+# exit makes the command before it fail with SIGPIPE, which pipefail treats as an error.
+ssh_port=$(sshd -T 2>/dev/null | awk '$1 == "port" && !p { print $2; p = 1 }') || true
 ssh_port=${ssh_port:-22}
 
 gateway="" lan_dev=""
-read -r gateway lan_dev < <(ip -4 route show default | awk '{
+read -r gateway lan_dev < <(ip -4 route show default | awk 'NR == 1 {
   for (i = 1; i <= NF; i++) { if ($i == "via") g = $(i + 1); if ($i == "dev") d = $(i + 1) }
-  print g, d; exit }') || true
+  print g, d }') || true
 lan_cidr=""
 if [[ -n $lan_dev ]]; then
-  lan_cidr=$(ip -4 route show dev "$lan_dev" scope link proto kernel | awk '{ print $1; exit }')
+  lan_cidr=$(ip -4 route show dev "$lan_dev" scope link proto kernel | awk 'NR == 1 { print $1 }')
 fi
 
 if [[ ${#ssh_from[@]} -eq 0 ]]; then
@@ -231,7 +236,7 @@ fi
 # it picks up the new config on the next connection.
 systemctl try-reload-or-restart ssh.service
 
-if ! sshd -T | grep -qx 'passwordauthentication no'; then
+if ! sshd -T | grep -x 'passwordauthentication no' >/dev/null; then
   warn "sshd still reports password login as enabled. Check that /etc/ssh/sshd_config
          has 'Include /etc/ssh/sshd_config.d/*.conf' near the top."
 fi
