@@ -170,8 +170,11 @@ printf '  - %s\n' "${plan[@]}"
 echo
 
 if ! $assume_yes; then
-  [[ -r /dev/tty ]] || die "no terminal to ask for confirmation; re-run with --yes"
-  read -rp "Continue? [y/N] " answer </dev/tty
+  # -r /dev/tty only checks permission bits: the device node exists (and is
+  # "readable") even with no controlling terminal, e.g. under `ssh host cmd`
+  # without -t. Only an actual open (via read) reveals that case (ENXIO).
+  read -rp "Continue? [y/N] " answer </dev/tty 2>/dev/null \
+    || die "no terminal to ask for confirmation; re-run with --yes"
   [[ $answer == [yY]* ]] || die "cancelled, nothing was changed"
 fi
 
